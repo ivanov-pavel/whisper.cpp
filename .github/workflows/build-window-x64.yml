@@ -25,14 +25,14 @@ jobs:
           call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
           set > "%GITHUB_ENV%"
 
-      - name: Configure for static build (basic)
+      - name: Configure with static runtime and OpenMP
         shell: cmd
         run: |
           cmake -S . -B ./build -A x64 ^
             -DCMAKE_BUILD_TYPE=Release ^
             -DBUILD_SHARED_LIBS=OFF
 
-      - name: Build with static runtime via MSBuild properties
+      - name: Build with static runtime and OpenMP
         shell: cmd
         run: |
           cd ./build
@@ -42,7 +42,21 @@ jobs:
             -p:UseMultiToolTask=true ^
             -p:EnforceProcessCountAcrossBuilds=true ^
             -p:RuntimeLibrary=MultiThreaded ^
-            -p:WholeProgramOptimization=false
+            -p:OpenMP=true
+
+      - name: Check for static OpenMP
+        shell: cmd
+        run: |
+          echo "=== Checking for static OpenMP ==="
+          where libvcomp.lib
+          where libomp.lib
+
+      - name: Manually link static OpenMP if needed
+        shell: cmd
+        run: |
+          echo "=== Manually copying static OpenMP libraries ==="
+          copy "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Tools\MSVC\14.*\lib\x64\libvcomp.lib" build\lib\Release\ 2>nul || echo "libvcomp.lib not found"
+          copy "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Tools\MSVC\14.*\lib\x64\libomp.lib" build\lib\Release\ 2>nul || echo "libomp.lib not found"
 
       - name: Check runtime library linkage
         shell: cmd
@@ -107,6 +121,22 @@ jobs:
               echo "Copying executable: $($file.Name)"
               Copy-Item $file.FullName "dist\bin\" -Force
             }
+          }
+
+      - name: Copy static OpenMP libraries to distribution
+        shell: pwsh
+        run: |
+          echo "=== Copying static OpenMP libraries ==="
+          $vcompPath = Get-ChildItem "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Tools\MSVC" -Recurse -Filter "libvcomp.lib" | Select-Object -First 1
+          $ompPath = Get-ChildItem "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Tools\MSVC" -Recurse -Filter "libomp.lib" | Select-Object -First 1
+          
+          if ($vcompPath) {
+            Copy-Item $vcompPath.FullName "dist\lib\"
+            echo "Copied libvcomp.lib"
+          }
+          if ($ompPath) {
+            Copy-Item $ompPath.FullName "dist\lib\"
+            echo "Copied libomp.lib"
           }
 
       - name: Create zip archive
