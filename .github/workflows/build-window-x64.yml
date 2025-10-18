@@ -19,22 +19,20 @@ jobs:
       - name: Add msbuild to PATH
         uses: microsoft/setup-msbuild@v2
 
-      - name: Configure for static build
+      - name: Setup VC Tools for dumpbin
+        shell: cmd
+        run: |
+          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
+          set > "%GITHUB_ENV%"
+
+      - name: Configure for static build with direct flags
         shell: cmd
         run: |
           cmake -S . -B ./build -A x64 ^
             -DCMAKE_BUILD_TYPE=Release ^
             -DBUILD_SHARED_LIBS=OFF ^
-            -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded ^
-            -DCMAKE_POLICY_DEFAULT_CMP0091=NEW
-
-      - name: Verify CMake cache
-        shell: pwsh
-        run: |
-          echo "=== Checking CMakeCache.txt for runtime library setting ==="
-          if (Test-Path "build\CMakeCache.txt") {
-            Select-String -Path "build\CMakeCache.txt" -Pattern "CMAKE_MSVC_RUNTIME_LIBRARY" | ForEach-Object { $_.Line }
-          }
+            -DCMAKE_C_FLAGS_RELEASE="/MT" ^
+            -DCMAKE_CXX_FLAGS_RELEASE="/MT"
 
       - name: Build static libraries
         shell: cmd
@@ -44,20 +42,18 @@ jobs:
             -p:configuration=Release ^
             -p:platform=x64 ^
             -p:UseMultiToolTask=true ^
-            -p:EnforceProcessCountAcrossBuilds=true ^
-            -p:RuntimeLibrary=MultiThreaded
+            -p:EnforceProcessCountAcrossBuilds=true
 
       - name: Check runtime library linkage
-        shell: pwsh
+        shell: cmd
         run: |
           echo "=== Checking runtime library linkage ==="
-          $libFiles = Get-ChildItem -Path "build" -Recurse -Filter "*.lib"
-          if ($libFiles) {
-            foreach ($file in $libFiles[0..2]) { # Check first 3 libs
-              echo "Checking: $($file.Name)"
-              dumpbin /directives "$($file.FullName)" | Select-String "RuntimeLibrary"
-            }
-          }
+          cd build
+          for /r %%i in (*.lib) do (
+            echo Checking: %%~nxi
+            dumpbin /directives "%%i" | findstr "RuntimeLibrary" || echo No RuntimeLibrary directive found
+            exit /b 0
+          )
 
       - name: Create distribution directory structure
         shell: pwsh
