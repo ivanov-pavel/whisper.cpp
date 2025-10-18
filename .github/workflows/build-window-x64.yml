@@ -2,8 +2,7 @@ name: Windows x64 Static Build
 
 on:
   push:
-    branches:
-      - master
+    branches: [ master ]
 
 env:
   BRANCH_NAME: ${{ github.head_ref || github.ref_name }}
@@ -11,126 +10,69 @@ env:
 jobs:
   windows-x64-static:
     runs-on: windows-latest
-    
+
     steps:
-      - name: Clone
+      - name: Checkout source
         uses: actions/checkout@v4
 
       - name: Add msbuild to PATH
         uses: microsoft/setup-msbuild@v2
 
-      - name: Setup VC Tools with proper environment
+      - name: Configure and build static library (OpenMP + static runtime)
         shell: cmd
         run: |
+          rem === Setup Visual Studio environment ===
           call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
-          echo "VC Tools environment set up"
 
-      - name: Configure for completely static build (no OpenMP, static runtime)
-        shell: cmd
-        run: |
-          cmake -S . -B ./build -A x64 ^
+          rem === Configure static build ===
+          cmake -S . -B build -A x64 ^
             -DCMAKE_BUILD_TYPE=Release ^
             -DBUILD_SHARED_LIBS=OFF ^
-            -DGGML_OPENMP=OFF ^
-            -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded
+            -DGGML_OPENMP=ON ^
+            -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded ^
+            -DCMAKE_C_FLAGS_RELEASE="/O2 /MT /openmp:llvm" ^
+            -DCMAKE_CXX_FLAGS_RELEASE="/O2 /MT /openmp:llvm"
 
-      - name: Build static libraries
-        shell: cmd
-        run: |
-          cd ./build
-          msbuild ALL_BUILD.vcxproj -t:build ^
-            -p:configuration=Release ^
-            -p:platform=x64 ^
-            -p:UseMultiToolTask=true ^
-            -p:EnforceProcessCountAcrossBuilds=true ^
-            -p:RuntimeLibrary=MultiThreaded
+          rem === Build all targets statically ===
+          cmake --build build --config Release --parallel
 
-      - name: Simple file check
+      - name: Collect static library
         shell: pwsh
         run: |
-          echo "=== Simple verification ==="
-          if (Test-Path "build\bin\Release\*.exe") {
-            $exeFiles = Get-ChildItem -Path "build\bin\Release" -Filter "*.exe"
-            Write-Host "Built $($exeFiles.Count) executables:"
-            $exeFiles | ForEach-Object { Write-Host "  - $($_.Name)" }
-          } else {
-            Write-Host "No executables found in build\bin\Release"
-          }
-          
-          if (Test-Path "build\lib\Release\*.lib") {
-            $libFiles = Get-ChildItem -Path "build\lib\Release" -Filter "*.lib"
-            Write-Host "Built $($libFiles.Count) libraries:"
-            $libFiles | ForEach-Object { Write-Host "  - $($_.Name)" }
-          } else {
-            Write-Host "No libraries found in build\lib\Release"
+          New-Item -ItemType Directory -Path dist\lib -Force | Out-Null
+          New-Item -ItemType Directory -Path dist\include -Force | Out-Null
+
+          $libFiles = Get-ChildItem -Recurse -Path "build" -Filter "*.lib"
+          foreach ($lib in $libFiles) {
+            Write-Host "Found library: $($lib.FullName)"
+            Copy-Item $lib.FullName "dist\lib\" -Force
           }
 
-      - name: Create distribution directory structure
-        shell: pwsh
-        run: |
-          New-Item -ItemType Directory -Path "dist\include" -Force | Out-Null
-          New-Item -ItemType Directory -Path "dist\lib" -Force | Out-Null
-          New-Item -ItemType Directory -Path "dist\bin" -Force | Out-Null
-
-      - name: Copy header files
-        shell: pwsh
-        run: |
-          echo "Copying essential header files..."
-          $headers = @("whisper.h", "ggml.h", "ggml-alloc.h", "ggml-backend.h")
-          foreach ($header in $headers) {
-            if (Test-Path $header) {
-              Copy-Item $header "dist\include\" -Force
-              echo "Copied: $header"
-            }
-          }
-          Get-ChildItem -Path "." -Filter "*.h" | ForEach-Object {
+          # Copy all public headers
+          Get-ChildItem -Path "." -Filter "*.h" -Recurse | ForEach-Object {
             Copy-Item $_.FullName "dist\include\" -Force
           }
 
-      - name: Copy static libraries and executables
-        shell: pwsh
-        run: |
-          echo "Copying libraries and executables..."
-          
-          # Copy libraries from various possible locations
-          $libPaths = @("build\lib\Release", "build\Release", "build\ggml\src\Release", "build\src\Release")
-          foreach ($libPath in $libPaths) {
-            if (Test-Path $libPath) {
-              Get-ChildItem -Path $libPath -Filter "*.lib" | ForEach-Object {
-                echo "Copying library: $($_.Name)"
-                Copy-Item $_.FullName "dist\lib\" -Force
-              }
-            }
-          }
-          
-          # Copy executables
-          if (Test-Path "build\bin\Release\*.exe") {
-            Get-ChildItem -Path "build\bin\Release" -Filter "*.exe" | ForEach-Object {
-              echo "Copying executable: $($_.Name)"
-              Copy-Item $_.FullName "dist\bin\" -Force
-            }
-          }
+          Write-Host "Static build complete."
 
-      - name: Verify distribution contents
+      - name: Verify outputs
         shell: pwsh
         run: |
-          echo "=== Final distribution contents ==="
+          echo "=== Distribution contents ==="
           echo "Headers:"
           Get-ChildItem -Path "dist\include" -Name
           echo "Libraries:"
           Get-ChildItem -Path "dist\lib" -Name
-          echo "Executables:"
-          Get-ChildItem -Path "dist\bin" -Name
           echo "Total files:"
           (Get-ChildItem -Path "dist" -Recurse).Count
 
-      - name: Create zip archive
+      - name: Create static zip package
         shell: pwsh
         run: |
           Compress-Archive -Path "dist\*" -DestinationPath "whisper-static-x64-windows.zip" -Force
           Write-Host "Created whisper-static-x64-windows.zip"
 
-      - name: Upload zip artifact
+      - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
           name: whisper-static-x64-windows
