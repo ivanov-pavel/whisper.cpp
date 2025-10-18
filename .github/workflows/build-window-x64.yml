@@ -37,15 +37,20 @@ jobs:
             -p:UseMultiToolTask=true ^
             -p:EnforceProcessCountAcrossBuilds=true
 
-      - name: List built artifacts
+      - name: Discover build output structure
         shell: pwsh
         run: |
-          echo "=== Library files ==="
-          dir build\lib\Release /s
-          echo "=== Binary files ==="
-          dir build\bin\Release /s
-          echo "=== Include files ==="
-          dir .\*.h /s
+          echo "=== Full build directory structure ==="
+          Get-ChildItem -Path "build" -Recurse | Format-Table Name, FullName
+          
+          echo "=== Looking for libraries ==="
+          Get-ChildItem -Path "build" -Recurse -Filter "*.lib" | Format-Table Name, Directory
+          
+          echo "=== Looking for executables ==="
+          Get-ChildItem -Path "build" -Recurse -Filter "*.exe" | Format-Table Name, Directory
+          
+          echo "=== Release directories ==="
+          Get-ChildItem -Path "build" -Recurse -Directory -Filter "Release" | Format-Table FullName
 
       - name: Create distribution directory structure
         shell: pwsh
@@ -57,39 +62,52 @@ jobs:
       - name: Copy header files
         shell: pwsh
         run: |
-          # Copy main header files
-          copy *.h dist\include\ 2>nul | Out-Null
-          # Copy whisper headers
-          if (Test-Path "*.hpp") {
-            Copy-Item -Path "*.hpp" -Destination "dist\include\" -Recurse -Force
-          }
-          # Copy specific headers
-          if (Test-Path "whisper.h") {
-            Copy-Item -Path "whisper.h" -Destination "dist\include\"
-          }
-          if (Test-Path "ggml.h") {
-            Copy-Item -Path "ggml.h" -Destination "dist\include\"
+          echo "Copying header files..."
+          # Copy all C/C++ headers recursively
+          Get-ChildItem -Path "." -Recurse -Include "*.h", "*.hpp" | ForEach-Object {
+            $relativePath = $_.FullName.Replace($pwd.Path, "").TrimStart("\")
+            $destDir = Join-Path "dist\include" (Split-Path $relativePath -Parent)
+            mkdir -p $destDir | Out-Null
+            Copy-Item $_.FullName $destDir -Force
           }
 
-      - name: Copy static libraries
+      - name: Copy static libraries and executables
         shell: pwsh
         run: |
-          if (Test-Path "build\lib\Release\*.lib") {
-            Copy-Item -Path "build\lib\Release\*.lib" -Destination "dist\lib\"
+          echo "Copying libraries and executables..."
+          
+          # Find and copy all .lib files
+          $libFiles = Get-ChildItem -Path "build" -Recurse -Filter "*.lib"
+          if ($libFiles) {
+            foreach ($file in $libFiles) {
+              echo "Copying library: $($file.Name)"
+              Copy-Item $file.FullName "dist\lib\" -Force
+            }
+          } else {
+            echo "No .lib files found"
           }
-          if (Test-Path "build\Release\*.lib") {
-            Copy-Item -Path "build\Release\*.lib" -Destination "dist\lib\"
+          
+          # Find and copy all .exe files
+          $exeFiles = Get-ChildItem -Path "build" -Recurse -Filter "*.exe"
+          if ($exeFiles) {
+            foreach ($file in $exeFiles) {
+              echo "Copying executable: $($file.Name)"
+              Copy-Item $file.FullName "dist\bin\" -Force
+            }
+          } else {
+            echo "No .exe files found"
           }
 
-      - name: Copy executables
+      - name: Verify distribution contents
         shell: pwsh
         run: |
-          if (Test-Path "build\bin\Release\*.exe") {
-            Copy-Item -Path "build\bin\Release\*.exe" -Destination "dist\bin\"
-          }
-          if (Test-Path "build\Release\*.exe") {
-            Copy-Item -Path "build\Release\*.exe" -Destination "dist\bin\"
-          }
+          echo "=== Distribution contents ==="
+          echo "Headers:"
+          Get-ChildItem -Path "dist\include" -Recurse | Format-Table Name
+          echo "Libraries:"
+          Get-ChildItem -Path "dist\lib" -Recurse | Format-Table Name
+          echo "Binaries:"
+          Get-ChildItem -Path "dist\bin" -Recurse | Format-Table Name
 
       - name: Create zip archive
         shell: pwsh
@@ -110,4 +128,3 @@ jobs:
           name: whisper-static-x64-windows
           path: whisper-static-x64-windows.zip
           retention-days: 30
-
