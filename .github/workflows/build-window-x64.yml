@@ -18,7 +18,7 @@ jobs:
       - name: Add MSBuild to PATH
         uses: microsoft/setup-msbuild@v2
 
-      - name: Configure and build static library (OpenMP + static runtime)
+      - name: Configure and build static library + executables
         shell: cmd
         run: |
           rem === Setup Visual Studio environment ===
@@ -33,14 +33,15 @@ jobs:
             -DCMAKE_C_FLAGS_RELEASE="/O2 /MT /openmp:llvm" ^
             -DCMAKE_CXX_FLAGS_RELEASE="/O2 /MT /openmp:llvm"
 
-          rem === Build all targets statically ===
+          rem === Build all targets (libs + exe) ===
           cmake --build build --config Release --parallel
 
-      - name: Collect static libraries and headers
+      - name: Collect static libraries, headers, and executables
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Path dist\lib -Force | Out-Null
           New-Item -ItemType Directory -Path dist\include -Force | Out-Null
+          New-Item -ItemType Directory -Path dist\bin -Force | Out-Null
 
           # Copy all built static libraries
           $libFiles = Get-ChildItem -Recurse -Path "build" -Filter "*.lib"
@@ -49,7 +50,7 @@ jobs:
             Copy-Item $lib.FullName "dist\lib\" -Force
           }
 
-          # Copy headers safely (skip self-overwrites)
+          # Copy headers safely
           $headers = Get-ChildItem -Path "." -Filter "*.h" -Recurse
           foreach ($header in $headers) {
             $dest = Join-Path "dist\include" $header.Name
@@ -59,7 +60,12 @@ jobs:
             }
           }
 
-          Write-Host "Static build and header collection complete."
+          # Copy executables
+          $exeFiles = Get-ChildItem -Recurse -Path "build" -Filter "*.exe"
+          foreach ($exe in $exeFiles) {
+            Write-Host "Found executable: $($exe.FullName)"
+            Copy-Item $exe.FullName "dist\bin\" -Force
+          }
 
       - name: Merge all static libraries into whisper.lib
         shell: cmd
@@ -85,6 +91,8 @@ jobs:
           Get-ChildItem -Path "dist\include" -Name
           echo "Libraries:"
           Get-ChildItem -Path "dist\lib" -Name
+          echo "Executables:"
+          Get-ChildItem -Path "dist\bin" -Name
           echo "Total files:"
           (Get-ChildItem -Path "dist" -Recurse).Count
 
