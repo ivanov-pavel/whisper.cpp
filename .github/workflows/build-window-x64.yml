@@ -4,19 +4,6 @@ on:
   push:
     branches:
       - master
-    paths:
-      - '.github/workflows/build.yml'
-      - '**/CMakeLists.txt'
-      - '**/Makefile'
-      - '**/*.mk'
-      - '**/*.cmake'
-      - '**/*.in'
-      - '**/*.h'
-      - '**/*.hpp'
-      - '**/*.c'
-      - '**/*.cpp'
-      - '**/*.cu'
-      - '**/*.cuh'
 
 env:
   BRANCH_NAME: ${{ github.head_ref || github.ref_name }}
