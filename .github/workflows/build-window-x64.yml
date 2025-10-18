@@ -1,0 +1,125 @@
+name: Windows x64 Static Build
+
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - '.github/workflows/build.yml'
+      - '**/CMakeLists.txt'
+      - '**/Makefile'
+      - '**/*.mk'
+      - '**/*.cmake'
+      - '**/*.in'
+      - '**/*.h'
+      - '**/*.hpp'
+      - '**/*.c'
+      - '**/*.cpp'
+      - '**/*.cu'
+      - '**/*.cuh'
+
+env:
+  BRANCH_NAME: ${{ github.head_ref || github.ref_name }}
+
+jobs:
+  windows-x64-static:
+    runs-on: windows-latest
+    
+    steps:
+      - name: Clone
+        uses: actions/checkout@v4
+
+      - name: Add msbuild to PATH
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Configure for static build
+        run: |
+          cmake -S . -B ./build -A x64 ^
+            -DCMAKE_BUILD_TYPE=Release ^
+            -DBUILD_SHARED_LIBS=OFF ^
+            -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded
+
+      - name: Build static libraries
+        run: |
+          cd ./build
+          msbuild ALL_BUILD.vcxproj -t:build ^
+            -p:configuration=Release ^
+            -p:platform=x64 ^
+            -p:UseMultiToolTask=true ^
+            -p:EnforceProcessCountAcrossBuilds=true
+
+      - name: List built artifacts
+        run: |
+          echo "=== Library files ==="
+          dir build\lib\Release /s
+          echo "=== Binary files ==="
+          dir build\bin\Release /s
+          echo "=== Include files ==="
+          dir .\*.h /s
+
+      - name: Create distribution directory structure
+        run: |
+          mkdir -p dist\include
+          mkdir -p dist\lib
+          mkdir -p dist\bin
+
+      - name: Copy header files
+        run: |
+          # Copy main header files
+          copy *.h dist\include\ 2>nul || echo "No root header files"
+          # Copy whisper headers
+          xcopy *.hpp dist\include\ /S /I 2>nul || echo "No hpp files"
+          xcopy whisper.h dist\include\ 2>nul || echo "No whisper.h"
+          # Copy ggml headers if they exist
+          if exist "ggml.h" copy ggml.h dist\include\
+          if exist "ggml-alloc.h" copy ggml-alloc.h dist\include\
+          if exist "ggml-backend.h" copy ggml-backend.h dist\include\
+
+      - name: Copy static libraries
+        run: |
+          if exist "build\lib\Release\*.lib" (
+            copy build\lib\Release\*.lib dist\lib\
+          )
+          if exist "build\Release\*.lib" (
+            copy build\Release\*.lib dist\lib\
+          )
+
+      - name: Copy executables
+        run: |
+          if exist "build\bin\Release\*.exe" (
+            copy build\bin\Release\*.exe dist\bin\
+          )
+          if exist "build\Release\*.exe" (
+            copy build\Release\*.exe dist\bin\
+          )
+
+      - name: Create README file
+        run: |
+          @echo # Whisper.cpp Windows x64 Static Libraries > dist\README.md
+          @echo. >> dist\README.md
+          @echo ## Contents >> dist\README.md
+          @echo - **include/**: Header files >> dist\README.md
+          @echo - **lib/**: Static library files (.lib) >> dist\README.md
+          @echo - **bin/**: Executable files >> dist\README.md
+          @echo. >> dist\README.md
+          @echo ## Usage >> dist\README.md
+          @echo Link against the static libraries in the lib/ directory. >> dist\README.md
+          @echo These libraries are built with static VC++ runtime. >> dist\README.md
+
+      - name: Create zip archive
+        run: |
+          Compress-Archive -Path "dist\*" -DestinationPath "whisper-static-x64-windows.zip" -Force
+
+      - name: Display zip contents
+        run: |
+          echo "=== Zip file contents ==="
+          if exist "whisper-static-x64-windows.zip" (
+            7z l whisper-static-x64-windows.zip
+          )
+
+      - name: Upload zip artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: whisper-static-x64-windows
+          path: whisper-static-x64-windows.zip
+          retention-days: 30
