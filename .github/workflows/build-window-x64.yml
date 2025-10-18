@@ -33,6 +33,7 @@ jobs:
         uses: microsoft/setup-msbuild@v2
 
       - name: Configure for static build
+        shell: cmd
         run: |
           cmake -S . -B ./build -A x64 ^
             -DCMAKE_BUILD_TYPE=Release ^
@@ -40,6 +41,7 @@ jobs:
             -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded
 
       - name: Build static libraries
+        shell: cmd
         run: |
           cd ./build
           msbuild ALL_BUILD.vcxproj -t:build ^
@@ -49,6 +51,7 @@ jobs:
             -p:EnforceProcessCountAcrossBuilds=true
 
       - name: List built artifacts
+        shell: pwsh
         run: |
           echo "=== Library files ==="
           dir build\lib\Release /s
@@ -58,64 +61,61 @@ jobs:
           dir .\*.h /s
 
       - name: Create distribution directory structure
+        shell: pwsh
         run: |
           mkdir -p dist\include
           mkdir -p dist\lib
           mkdir -p dist\bin
 
       - name: Copy header files
+        shell: pwsh
         run: |
           # Copy main header files
-          copy *.h dist\include\ 2>nul || echo "No root header files"
+          copy *.h dist\include\ 2>nul | Out-Null
           # Copy whisper headers
-          xcopy *.hpp dist\include\ /S /I 2>nul || echo "No hpp files"
-          xcopy whisper.h dist\include\ 2>nul || echo "No whisper.h"
-          # Copy ggml headers if they exist
-          if exist "ggml.h" copy ggml.h dist\include\
-          if exist "ggml-alloc.h" copy ggml-alloc.h dist\include\
-          if exist "ggml-backend.h" copy ggml-backend.h dist\include\
+          if (Test-Path "*.hpp") {
+            Copy-Item -Path "*.hpp" -Destination "dist\include\" -Recurse -Force
+          }
+          # Copy specific headers
+          if (Test-Path "whisper.h") {
+            Copy-Item -Path "whisper.h" -Destination "dist\include\"
+          }
+          if (Test-Path "ggml.h") {
+            Copy-Item -Path "ggml.h" -Destination "dist\include\"
+          }
 
       - name: Copy static libraries
+        shell: pwsh
         run: |
-          if exist "build\lib\Release\*.lib" (
-            copy build\lib\Release\*.lib dist\lib\
-          )
-          if exist "build\Release\*.lib" (
-            copy build\Release\*.lib dist\lib\
-          )
+          if (Test-Path "build\lib\Release\*.lib") {
+            Copy-Item -Path "build\lib\Release\*.lib" -Destination "dist\lib\"
+          }
+          if (Test-Path "build\Release\*.lib") {
+            Copy-Item -Path "build\Release\*.lib" -Destination "dist\lib\"
+          }
 
       - name: Copy executables
+        shell: pwsh
         run: |
-          if exist "build\bin\Release\*.exe" (
-            copy build\bin\Release\*.exe dist\bin\
-          )
-          if exist "build\Release\*.exe" (
-            copy build\Release\*.exe dist\bin\
-          )
-
-      - name: Create README file
-        run: |
-          @echo # Whisper.cpp Windows x64 Static Libraries > dist\README.md
-          @echo. >> dist\README.md
-          @echo ## Contents >> dist\README.md
-          @echo - **include/**: Header files >> dist\README.md
-          @echo - **lib/**: Static library files (.lib) >> dist\README.md
-          @echo - **bin/**: Executable files >> dist\README.md
-          @echo. >> dist\README.md
-          @echo ## Usage >> dist\README.md
-          @echo Link against the static libraries in the lib/ directory. >> dist\README.md
-          @echo These libraries are built with static VC++ runtime. >> dist\README.md
+          if (Test-Path "build\bin\Release\*.exe") {
+            Copy-Item -Path "build\bin\Release\*.exe" -Destination "dist\bin\"
+          }
+          if (Test-Path "build\Release\*.exe") {
+            Copy-Item -Path "build\Release\*.exe" -Destination "dist\bin\"
+          }
 
       - name: Create zip archive
+        shell: pwsh
         run: |
           Compress-Archive -Path "dist\*" -DestinationPath "whisper-static-x64-windows.zip" -Force
 
       - name: Display zip contents
+        shell: pwsh
         run: |
           echo "=== Zip file contents ==="
-          if exist "whisper-static-x64-windows.zip" (
+          if (Test-Path "whisper-static-x64-windows.zip") {
             7z l whisper-static-x64-windows.zip
-          )
+          }
 
       - name: Upload zip artifact
         uses: actions/upload-artifact@v4
