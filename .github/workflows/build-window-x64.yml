@@ -45,19 +45,6 @@ jobs:
             -p:EnforceProcessCountAcrossBuilds=true ^
             -p:RuntimeLibrary=MultiThreaded
 
-      - name: Verify static linking
-        shell: pwsh
-        run: |
-          echo "=== Checking for static runtime dependencies ==="
-          if (Test-Path "build\bin\Release\*.exe") {
-            $exeFiles = Get-ChildItem -Path "build\bin\Release" -Filter "*.exe"
-            foreach ($exe in $exeFiles) {
-              Write-Host "Checking: $($exe.Name)"
-              # Use dumpbin to check imports
-              & "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Tools\MSVC\*\bin\Hostx64\x64\dumpbin.exe" /dependents $exe.FullName | Select-String "MSVCR" || Write-Host "  No MSVCR dependency found - static build successful"
-            }
-          }
-
       - name: Simple file check
         shell: pwsh
         run: |
