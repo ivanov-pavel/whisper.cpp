@@ -15,7 +15,7 @@ jobs:
       - name: Checkout source
         uses: actions/checkout@v4
 
-      - name: Add msbuild to PATH
+      - name: Add MSBuild to PATH
         uses: microsoft/setup-msbuild@v2
 
       - name: Configure and build static library (OpenMP + static runtime)
@@ -36,26 +36,48 @@ jobs:
           rem === Build all targets statically ===
           cmake --build build --config Release --parallel
 
-      - name: Collect static library
+      - name: Collect static libraries and headers
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Path dist\lib -Force | Out-Null
           New-Item -ItemType Directory -Path dist\include -Force | Out-Null
 
+          # Copy all built static libraries
           $libFiles = Get-ChildItem -Recurse -Path "build" -Filter "*.lib"
           foreach ($lib in $libFiles) {
             Write-Host "Found library: $($lib.FullName)"
             Copy-Item $lib.FullName "dist\lib\" -Force
           }
 
-          # Copy all public headers
-          Get-ChildItem -Path "." -Filter "*.h" -Recurse | ForEach-Object {
-            Copy-Item $_.FullName "dist\include\" -Force
+          # Copy headers safely (skip self-overwrites)
+          $headers = Get-ChildItem -Path "." -Filter "*.h" -Recurse
+          foreach ($header in $headers) {
+            $dest = Join-Path "dist\include" $header.Name
+            if ($header.FullName -ne (Resolve-Path $dest -ErrorAction SilentlyContinue)) {
+              Copy-Item $header.FullName "dist\include\" -Force
+              Write-Host "Copied header: $($header.Name)"
+            }
           }
 
-          Write-Host "Static build complete."
+          Write-Host "Static build and header collection complete."
 
-      - name: Verify outputs
+      - name: Merge all static libraries into whisper.lib
+        shell: cmd
+        run: |
+          rem Ensure VC tools are loaded
+          call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
+
+          cd dist\lib
+
+          rem Remove existing whisper.lib if exists
+          if exist whisper.lib del whisper.lib
+
+          rem Merge all .lib files into one
+          lib /OUT:whisper.lib *.lib
+
+          echo "Created single whisper.lib containing all static libraries"
+
+      - name: Verify distribution
         shell: pwsh
         run: |
           echo "=== Distribution contents ==="
