@@ -19,126 +19,96 @@ jobs:
       - name: Add msbuild to PATH
         uses: microsoft/setup-msbuild@v2
 
-      - name: Setup VC Tools and find OpenMP
+      - name: Setup VC Tools
         shell: cmd
         run: |
           call "C:\Program Files\Microsoft Visual Studio\2022\Enterprise\VC\Auxiliary\Build\vcvars64.bat"
-          set > "%GITHUB_ENV%"
-          
-          echo "=== Searching for OpenMP libraries ==="
-          where /r "C:\Program Files\Microsoft Visual Studio" *.lib | findstr /i "vcomp\|omp" || echo "No OpenMP libraries found"
 
-      - name: Configure with static runtime
+      - name: Configure for completely static build (no OpenMP)
         shell: cmd
         run: |
           cmake -S . -B ./build -A x64 ^
             -DCMAKE_BUILD_TYPE=Release ^
-            -DBUILD_SHARED_LIBS=OFF
+            -DBUILD_SHARED_LIBS=OFF ^
+            -DGGML_OPENMP=OFF
 
-      - name: Build with static runtime using response file
+      - name: Build static libraries
         shell: cmd
         run: |
           cd ./build
-          # Create a response file with static linking options
-          echo /p:RuntimeLibrary=MultiThreaded > static_opts.rsp
-          echo /p:WholeProgramOptimization=false >> static_opts.rsp
-          
           msbuild ALL_BUILD.vcxproj -t:build ^
             -p:configuration=Release ^
             -p:platform=x64 ^
-            @static_opts.rsp
+            -p:UseMultiToolTask=true ^
+            -p:EnforceProcessCountAcrossBuilds=true
 
-      - name: Force static OpenMP linking via manual intervention
-        shell: pwsh
-        run: |
-          echo "=== Manually ensuring static OpenMP ==="
-          
-          # Find the actual OpenMP library paths
-          $vcompLibs = Get-ChildItem "C:\Program Files\Microsoft Visual Studio" -Recurse -Filter "*vcomp*.lib" | Where-Object { $_.Name -match 'libvcomp' }
-          $ompLibs = Get-ChildItem "C:\Program Files\Microsoft Visual Studio" -Recurse -Filter "*omp*.lib" | Where-Object { $_.Name -match 'libomp' }
-          
-          Write-Host "Found vcomp libs: $($vcompLibs.Count)"
-          Write-Host "Found omp libs: $($ompLibs.Count)"
-          
-          if ($vcompLibs) {
-            foreach ($lib in $vcompLibs) {
-              Write-Host "vcomp: $($lib.FullName)"
-            }
-          }
-          
-          if ($ompLibs) {
-            foreach ($lib in $ompLibs) {
-              Write-Host "omp: $($lib.FullName)"
-            }
-          }
-
-      - name: Create custom build with static OpenMP
-        shell: pwsh
-        run: |
-          echo "=== Building with explicit static OpenMP ==="
-          
-          # Create a clean build directory
-          Remove-Item -Recurse -Force build2 -ErrorAction SilentlyContinue
-          mkdir build2
-          
-          # Build with explicit static flags
-          & cmake -S . -B ./build2 -A x64 `
-            -DCMAKE_BUILD_TYPE=Release `
-            -DBUILD_SHARED_LIBS=OFF `
-            -DCMAKE_C_FLAGS="/MT" `
-            -DCMAKE_CXX_FLAGS="/MT"
-          
-          cd build2
-          
-          # Build specific targets that we want
-          & msbench ALL_BUILD.vcxproj -t:build `
-            -p:configuration=Release `
-            -p:platform=x64
-
-      - name: Check the results
+      - name: Verify static linking
         shell: cmd
         run: |
-          echo "=== Final dependency check ==="
-          if exist "build2\bin\Release\*.exe" (
-            for %%i in (build2\bin\Release\*.exe) do (
-              echo Checking: %%~nxi
-              dumpbin /dependents "%%i" | findstr "MSVCR\|VCOMP"
-            )
-          ) else if exist "build\bin\Release\*.exe" (
-            for %%i in (build\bin\Release\*.exe) do (
-              echo Checking: %%~nxi
-              dumpbin /dependents "%%i" | findstr "MSVCR\|VCOMP"
-            )
+          echo "=== Checking executable dependencies ==="
+          cd build
+          for /r %%i in (bin\Release\*.exe) do (
+            echo Checking: %%~nxi
+            dumpbin /dependents "%%i"
+            echo ------------------------
           )
 
-      - name: Create distribution from successful build
+      - name: Create distribution directory structure
         shell: pwsh
         run: |
-          $sourceDir = if (Test-Path "build2\bin\Release") { "build2" } else { "build" }
-          echo "Using source directory: $sourceDir"
-          
           New-Item -ItemType Directory -Path "dist\include" -Force | Out-Null
           New-Item -ItemType Directory -Path "dist\lib" -Force | Out-Null
           New-Item -ItemType Directory -Path "dist\bin" -Force | Out-Null
 
-          echo "Copying header files..."
+      - name: Copy header files
+        shell: pwsh
+        run: |
+          echo "Copying essential header files..."
           $headers = @("whisper.h", "ggml.h", "ggml-alloc.h", "ggml-backend.h")
           foreach ($header in $headers) {
             if (Test-Path $header) {
               Copy-Item $header "dist\include\" -Force
+              echo "Copied: $header"
+            }
+          }
+          Get-ChildItem -Path "." -Filter "*.h" | ForEach-Object {
+            Copy-Item $_.FullName "dist\include\" -Force
+          }
+
+      - name: Copy static libraries and executables
+        shell: pwsh
+        run: |
+          echo "Copying libraries and executables..."
+          
+          # Copy libraries from various possible locations
+          $libPaths = @("build\lib\Release", "build\Release", "build\ggml\src\Release", "build\src\Release")
+          foreach ($libPath in $libPaths) {
+            if (Test-Path $libPath) {
+              Get-ChildItem -Path $libPath -Filter "*.lib" | ForEach-Object {
+                echo "Copying library: $($_.Name)"
+                Copy-Item $_.FullName "dist\lib\" -Force
+              }
+            }
+          }
+          
+          # Copy executables
+          if (Test-Path "build\bin\Release\*.exe") {
+            Get-ChildItem -Path "build\bin\Release" -Filter "*.exe" | ForEach-Object {
+              echo "Copying executable: $($_.Name)"
+              Copy-Item $_.FullName "dist\bin\" -Force
             }
           }
 
-          echo "Copying libraries and executables..."
-          if (Test-Path "$sourceDir\bin\Release\*.exe") {
-            Copy-Item "$sourceDir\bin\Release\*.exe" "dist\bin\" -Force
-          }
-          if (Test-Path "$sourceDir\lib\Release\*.lib") {
-            Copy-Item "$sourceDir\lib\Release\*.lib" "dist\lib\" -Force
-          }
-          if (Test-Path "$sourceDir\Release\*.lib") {
-            Copy-Item "$sourceDir\Release\*.lib" "dist\lib\" -Force
-          }
+      - name: Verify distribution contents
+        shell: pwsh
+        run: |
+          echo "=== Distribution contents ==="
+          echo "Headers in dist\include:"
+          Get-ChildItem -Path "dist\include" -Name
+          echo "Libraries in dist\lib:"
+          Get-ChildItem -Path "dist\lib" -Name
+          echo "Executables in dist\bin:"
+          Get-ChildItem -Path "dist\bin" -Name
 
       - name: Create zip archive
         shell: pwsh
