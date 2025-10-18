@@ -41,7 +41,8 @@ jobs:
             -p:configuration=Release ^
             -p:platform=x64 ^
             -p:UseMultiToolTask=true ^
-            -p:EnforceProcessCountAcrossBuilds=true
+            -p:EnforceProcessCountAcrossBuilds=true ^
+            -p:RuntimeLibrary=MultiThreaded
 
       - name: Simple file check
         shell: pwsh
