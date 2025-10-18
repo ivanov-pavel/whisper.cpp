@@ -55,9 +55,9 @@ jobs:
       - name: Create distribution directory structure
         shell: pwsh
         run: |
-          mkdir -p dist\include
-          mkdir -p dist\lib
-          mkdir -p dist\bin
+          New-Item -ItemType Directory -Path "dist\include" -Force | Out-Null
+          New-Item -ItemType Directory -Path "dist\lib" -Force | Out-Null
+          New-Item -ItemType Directory -Path "dist\bin" -Force | Out-Null
 
       - name: Copy header files
         shell: pwsh
@@ -67,7 +67,8 @@ jobs:
           Get-ChildItem -Path "." -Recurse -Include "*.h", "*.hpp" | ForEach-Object {
             $relativePath = $_.FullName.Replace($pwd.Path, "").TrimStart("\")
             $destDir = Join-Path "dist\include" (Split-Path $relativePath -Parent)
-            mkdir -p $destDir | Out-Null
+            # Use New-Item with -Force to create directories without errors if they exist
+            New-Item -ItemType Directory -Path $destDir -Force | Out-Null
             Copy-Item $_.FullName $destDir -Force
           }
 
