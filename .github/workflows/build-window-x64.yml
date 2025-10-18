@@ -123,3 +123,4 @@ jobs:
           name: whisper-static-x64-windows
           path: whisper-static-x64-windows.zip
           retention-days: 30
+
