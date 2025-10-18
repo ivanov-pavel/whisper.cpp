@@ -25,7 +25,16 @@ jobs:
           cmake -S . -B ./build -A x64 ^
             -DCMAKE_BUILD_TYPE=Release ^
             -DBUILD_SHARED_LIBS=OFF ^
-            -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded
+            -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded ^
+            -DCMAKE_POLICY_DEFAULT_CMP0091=NEW
+
+      - name: Verify CMake cache
+        shell: pwsh
+        run: |
+          echo "=== Checking CMakeCache.txt for runtime library setting ==="
+          if (Test-Path "build\CMakeCache.txt") {
+            Select-String -Path "build\CMakeCache.txt" -Pattern "CMAKE_MSVC_RUNTIME_LIBRARY" | ForEach-Object { $_.Line }
+          }
 
       - name: Build static libraries
         shell: cmd
@@ -35,22 +44,20 @@ jobs:
             -p:configuration=Release ^
             -p:platform=x64 ^
             -p:UseMultiToolTask=true ^
-            -p:EnforceProcessCountAcrossBuilds=true
+            -p:EnforceProcessCountAcrossBuilds=true ^
+            -p:RuntimeLibrary=MultiThreaded
 
-      - name: Discover build output structure
+      - name: Check runtime library linkage
         shell: pwsh
         run: |
-          echo "=== Full build directory structure ==="
-          Get-ChildItem -Path "build" -Recurse | Format-Table Name, FullName
-          
-          echo "=== Looking for libraries ==="
-          Get-ChildItem -Path "build" -Recurse -Filter "*.lib" | Format-Table Name, Directory
-          
-          echo "=== Looking for executables ==="
-          Get-ChildItem -Path "build" -Recurse -Filter "*.exe" | Format-Table Name, Directory
-          
-          echo "=== Release directories ==="
-          Get-ChildItem -Path "build" -Recurse -Directory -Filter "Release" | Format-Table FullName
+          echo "=== Checking runtime library linkage ==="
+          $libFiles = Get-ChildItem -Path "build" -Recurse -Filter "*.lib"
+          if ($libFiles) {
+            foreach ($file in $libFiles[0..2]) { # Check first 3 libs
+              echo "Checking: $($file.Name)"
+              dumpbin /directives "$($file.FullName)" | Select-String "RuntimeLibrary"
+            }
+          }
 
       - name: Create distribution directory structure
         shell: pwsh
@@ -62,14 +69,18 @@ jobs:
       - name: Copy header files
         shell: pwsh
         run: |
-          echo "Copying header files..."
-          # Copy all C/C++ headers recursively
-          Get-ChildItem -Path "." -Recurse -Include "*.h", "*.hpp" | ForEach-Object {
-            $relativePath = $_.FullName.Replace($pwd.Path, "").TrimStart("\")
-            $destDir = Join-Path "dist\include" (Split-Path $relativePath -Parent)
-            # Use New-Item with -Force to create directories without errors if they exist
-            New-Item -ItemType Directory -Path $destDir -Force | Out-Null
-            Copy-Item $_.FullName $destDir -Force
+          echo "Copying essential header files..."
+          # Copy only the main headers
+          $headers = @("whisper.h", "ggml.h", "ggml-alloc.h", "ggml-backend.h")
+          foreach ($header in $headers) {
+            if (Test-Path $header) {
+              Copy-Item $header "dist\include\" -Force
+              echo "Copied: $header"
+            }
+          }
+          # Copy any other .h files in root directory
+          Get-ChildItem -Path "." -Filter "*.h" | ForEach-Object {
+            Copy-Item $_.FullName "dist\include\" -Force
           }
 
       - name: Copy static libraries and executables
@@ -99,29 +110,10 @@ jobs:
             echo "No .exe files found"
           }
 
-      - name: Verify distribution contents
-        shell: pwsh
-        run: |
-          echo "=== Distribution contents ==="
-          echo "Headers:"
-          Get-ChildItem -Path "dist\include" -Recurse | Format-Table Name
-          echo "Libraries:"
-          Get-ChildItem -Path "dist\lib" -Recurse | Format-Table Name
-          echo "Binaries:"
-          Get-ChildItem -Path "dist\bin" -Recurse | Format-Table Name
-
       - name: Create zip archive
         shell: pwsh
         run: |
           Compress-Archive -Path "dist\*" -DestinationPath "whisper-static-x64-windows.zip" -Force
-
-      - name: Display zip contents
-        shell: pwsh
-        run: |
-          echo "=== Zip file contents ==="
-          if (Test-Path "whisper-static-x64-windows.zip") {
-            7z l whisper-static-x64-windows.zip
-          }
 
       - name: Upload zip artifact
         uses: actions/upload-artifact@v4
